@@ -10,6 +10,7 @@
 #include <netinet/tcp.h>
 #include <fcntl.h>
 #include <errno.h>
+//COmmento
 
 #define M1 4//26 //X+
 #define M2 17//13 //X-
