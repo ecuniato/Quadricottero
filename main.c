@@ -26,7 +26,7 @@ FILE* file;
 extern float dest1[3], dest2[3];
 float stepTime, stepTime1;
 ekf_t ekf;
- double height;
+ double height, zacc=0;
 
 struct dataStruct
   {
@@ -90,7 +90,7 @@ static void model(ekf_t * ekf, double acc)
   ekf->F[2][2] = 1;
   ekf->F[0][1] = stepTime;
 
-  ekf->hx[0] = ekf->x[0] + ekf->x[3];
+  ekf->hx[0] = ekf->x[0] + ekf->x[2];
   
   ekf->H[0][0]  = 1;
   ekf->H[0][1]  = 0;
@@ -117,6 +117,7 @@ PI_THREAD (sensorFusion)
 		data.angolo.z=atan2(2*q1*q2-2*q0*q3,2*q0*q0+2*q1*q1-1)*180/PI;
 	  data.angolo.x=asin(2*q1*q3+2*q0*q2)*180/PI;
 	  data.angolo.y=atan2(2*q2*q3-2*q0*q1,2*q0*q0+2*q3*q3-1)*180/PI;
+	  zacc=data.angolo.acc_z - (q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3);
 	  
 	  //TODO: Controllare convergenza sensor fusion
        
@@ -147,7 +148,7 @@ PI_THREAD (imuData)
   printf("Imu ready \n");
   
  //  while( !motoReady ) 
-    delay(500); 
+    delay(5000); 
   
   init_pid_param (&roll_angle_pid, data.a_kp, data.a_ki, data.a_kd, 0, 600, 0);
   init_pid_param (&pitch_angle_pid, data.a_kp, data.a_ki, data.a_kd, 0, 600, 0);
@@ -175,7 +176,7 @@ PI_THREAD (imuData)
       
       get_angle(&(data.angolo));
       
-			model(&ekf, (data.angolo.acc_z+1)*9.81);
+			model(&ekf, zacc);
 			height=44330.0*(1-pow((data.angolo.press/101325),(1/5.255)));
  			ekf_step(&ekf, &height);
   
@@ -250,7 +251,7 @@ PI_THREAD (debug)
   while (1)
   {
    //printf("StepSensors: %f - StepFusion: %f\n", stepTime, stepTime1);   
-   printf("X0: %f - X1: %f - X2: %f - H: %f\n", ekf.x[0], ekf.x[1], ekf.x[2], data.angolo.press);   
+   printf("X0: %f - X1: %f - X2: %f - H: %f\n", ekf.x[0], ekf.x[1], ekf.x[2], height);   
     fflush(NULL);
     delay(100);
   }
