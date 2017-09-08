@@ -1,4 +1,5 @@
 #include "incl/imu.h"
+#include "incl/gps_hc.h"
 #include "incl/pwm.h"
 #include "incl/pid.h"
 #include "incl/MadgwickAHRS.h"
@@ -10,7 +11,7 @@
 #include <netinet/tcp.h>
 #include <fcntl.h>
 #include <errno.h>
-//COmmento
+
 
 #define M1 4//26 //X+
 #define M2 17//13 //X-
@@ -26,7 +27,9 @@ FILE* file;
 extern float dest1[3], dest2[3];
 float stepTime, stepTime1;
 ekf_t ekf;
- double height, zacc=0;
+double height, zacc=0;
+float dist;
+
 
 struct dataStruct
   {
@@ -71,6 +74,7 @@ static void init(ekf_t * ekf)
     ekf->P[2][2] = 1000;
     
     ekf->R[0][0] = 1;
+    ekf->R[1][1] = 0.25;
 
     // initial states
     ekf->x[0] = 0;
@@ -91,10 +95,12 @@ static void model(ekf_t * ekf, double acc)
   ekf->F[0][1] = stepTime;
 
   ekf->hx[0] = ekf->x[0] + ekf->x[2];
+  ekf->hx[1] = ekf->x[0];
   
   ekf->H[0][0]  = 1;
   ekf->H[0][1]  = 0;
   ekf->H[0][2]  = 1;
+  ekf->H[1][0]	= 1;
 }
 
 
@@ -133,7 +139,7 @@ PI_THREAD (imuData)
   int roll_corr=0, pitch_corr=0, yaw_corr=0;
   int roll_rate_target=0, pitch_rate_target=0, yaw_rate_target=0;
   int M1corr=0, M2corr=0, M3corr=0, M4corr=0;
- 
+  
   
   // Do generic EKF initialization
  	ekf_init(&ekf, Nsta, Mobs);
@@ -148,7 +154,7 @@ PI_THREAD (imuData)
   printf("Imu ready \n");
   
  //  while( !motoReady ) 
-    delay(5000); 
+    delay(10000); 
   
   init_pid_param (&roll_angle_pid, data.a_kp, data.a_ki, data.a_kd, 0, 600, 0);
   init_pid_param (&pitch_angle_pid, data.a_kp, data.a_ki, data.a_kd, 0, 600, 0);
@@ -175,13 +181,12 @@ PI_THREAD (imuData)
       stepTime /= 1000000;      
       
       get_angle(&(data.angolo));
-      
-			model(&ekf, zacc);
+      dist = distanza_sensore(ECHO, TRIG) / 100;
+			model(&ekf, -zacc*9.81); //Check acc sign
 			height=44330.0*(1-pow((data.angolo.press/101325),(1/5.255)));
- 			ekf_step(&ekf, &height);
-  
-  
-      
+			double meas[]={height,dist};
+ 			ekf_step(&ekf, meas);
+ 			
       if (data.acro==0)
       {
 //      	roll_rate_target = round( pid(data.roll_rate, data.angolo.y, stepTime, &roll_angle_pid) );
@@ -251,7 +256,7 @@ PI_THREAD (debug)
   while (1)
   {
    //printf("StepSensors: %f - StepFusion: %f\n", stepTime, stepTime1);   
-   printf("X0: %f - X1: %f - X2: %f - H: %f\n", ekf.x[0], ekf.x[1], ekf.x[2], height);   
+   printf("X0: %f - X1: %f - X2: %f - H: %f\n", ekf.x[0], ekf.x[1], ekf.x[2], dist);   
     fflush(NULL);
     delay(100);
   }
@@ -308,6 +313,9 @@ int main()
 		printf("Inizializzazione gpio fallita!");
 		return 0;
 	}
+	
+	pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
 
 	// Apre l'interfaccia I2C
    fd = wiringPiI2CSetup(MPU_ADDRESS);

@@ -23,7 +23,7 @@
 #define Nsta 3
 
 /* observables */
-#define Mobs 1
+#define Mobs 2
 
 typedef struct {
 
