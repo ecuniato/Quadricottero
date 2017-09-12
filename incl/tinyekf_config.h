@@ -20,10 +20,10 @@
  */
 
 /* states */
-#define Nsta 3
+#define Nsta 4
 
 /* observables */
-#define Mobs 2
+#define Mobs 3
 
 typedef struct {
 

@@ -29,7 +29,7 @@ struct GPS_Data {
 };
 
 int waitforpin(int pin, int level, int timeout);
-float distanza_sensore(int echo, int trig);
+float distanza_sensore(int echo, int trig, float pre_dist, int* err);
 void gpsConfig(int fd);
 void gpsPrint(const struct GPS_Data* d);
 void scompatta(const char* s, struct GPS_Data* d);

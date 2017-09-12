@@ -245,9 +245,9 @@ int waitforpin(int pin, int level, int timeout)
    return micros;
 }
 
-float distanza_sensore(int echo, int trig)
+float distanza_sensore(int echo, int trig, float pre_dist, int* err)
 {
-	  float distance;
+	  float distance=pre_dist;
 	  int pulsewidth;
 	  int i;
 	 /* trigger reading */
@@ -273,12 +273,14 @@ float distanza_sensore(int echo, int trig)
          {
             /* no object detected code */
             printf("echo tiimed out\n");
+            *err=1;
          }
       }
       else
       {
          /* sensor not firing code */
-         printf("sensor didn't fire\n");		 
+         printf("sensor didn't fire\n");
+				 *err=1;		 
       }
 	  //DEBUG: delay(2000);
 	  if (distance > 400) distance = 400;

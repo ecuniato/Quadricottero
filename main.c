@@ -75,14 +75,17 @@ static void init(ekf_t * ekf)
     ekf->P[0][0] = 0.1;
     ekf->P[1][1] = 0.1;
     ekf->P[2][2] = 1000;
+    ekf->P[3][3] = 1000;
     
     ekf->R[0][0] = 1;
-    ekf->R[1][1] = 0.25;
+    ekf->R[1][1] = 10000;
+    ekf->R[2][2] = 10000;
 
     // initial states
     ekf->x[0] = 0;
     ekf->x[1] = 0;
     ekf->x[2] = 100;
+    ekf->x[3] = 100;
 }
 
 static void model(ekf_t * ekf, double acc)
@@ -91,19 +94,23 @@ static void model(ekf_t * ekf, double acc)
 	ekf->fx[0] = ekf->x[0] + stepTime * ekf->x[1] + pow(stepTime,2)*0.5*acc;
 	ekf->fx[1] = ekf->x[1] + stepTime*acc;
 	ekf->fx[2] = ekf->x[2];
+	ekf->fx[3] = ekf->x[3];
 	
   ekf->F[0][0] = 1;
   ekf->F[1][1] = 1;
   ekf->F[2][2] = 1;
+  ekf->F[3][3] = 1;
   ekf->F[0][1] = stepTime;
 
   ekf->hx[0] = ekf->x[0] + ekf->x[2];
   ekf->hx[1] = ekf->x[0];
+  ekf->hx[2] = ekf->x[0] + ekf->x[3];
   
   ekf->H[0][0]  = 1;
-  ekf->H[0][1]  = 0;
   ekf->H[0][2]  = 1;
   ekf->H[1][0]	= 1;
+  ekf->H[2][0]	= 1;
+  ekf->H[2][3]	= 1;
 }
 
 
@@ -186,7 +193,7 @@ PI_THREAD (imuData)
 
 			model(&ekf, -zacc*9.81); //Check acc sign
 			height=44330.0*(1-pow((data.angolo.press/101325),(1/5.255)));
-			double meas[]={height,dist};
+			double meas[]={height,dist,dd.altitude};
  			ekf_step(&ekf, meas);
  			
       if (data.acro==0)
@@ -252,7 +259,8 @@ PI_THREAD (imuData)
 
 PI_THREAD (HC_Gps) {
 	unsigned int time=0, time1;
-	int n=0, i=0;
+	int err=0;
+	int n=0, i=0, count=6;
 	char dati[500];
 	
 	while(!imuReady) delay(500);
@@ -263,10 +271,14 @@ PI_THREAD (HC_Gps) {
 		time = time1;
 	  stepTime2 /= 1000000; 
 	  
-	  dist = distanza_sensore(ECHO, TRIG) / 100;
+	  dist = distanza_sensore(ECHO, TRIG, dist, &err) / 100;
 	  
-		serialPuts(fd_gps, "$PUBX,00*33\r\n");  
-	  fflush(NULL);
+	  if (count>=5) {
+			serialPuts(fd_gps, "$PUBX,00*33\r\n");  
+	  	fflush(NULL);
+	  	count=0;
+	  }
+	  
 	  n = serialDataAvail(fd_gps);
 	   
 	  while(n >= 1)
@@ -286,7 +298,22 @@ PI_THREAD (HC_Gps) {
 		  break;
 		  } 
 		};
-	 
+		
+		//If no echo
+		if (err) {
+			ekf.R[1][1] = 10000;
+			err=0;
+		}
+		else
+			ekf.R[1][1] = 0.25;
+			
+	 	//If no gps signal
+	 	if (dd.nSat==0)
+    	ekf.R[2][2] = 10000;
+    else
+    	ekf.R[2][2] = 1+pow(dd.nSat,-0.5);
+    	
+    count++;
 		usleep(10000);
 		
 	}
@@ -300,11 +327,11 @@ PI_THREAD (debug)
   while (1)
   {
    //printf("StepSensors: %f - StepFusion: %f\n", stepTime, stepTime1);   
-   printf("X0: %f - X1: %f - X2: %f - HF: %f - HS: %f - HC: %f - dis: %f\n", ekf.x[0], ekf.x[1], ekf.x[2], stepTime1, stepTime, stepTime2, dist);   
-   gpsPrint(&dd);
+   printf("X0: %f - X1: %f - X2: %f - X3: %f - HF: %f - HS: %f - HC: %f - dis: %f\n", ekf.x[0], ekf.x[1], ekf.x[2], ekf.x[3], stepTime1, stepTime, stepTime2, dist);   
+  // gpsPrint(&dd);
 	 // printf("\n%f ",dist);
 		fflush(NULL);
-    delay(1000);
+    delay(200);
   }
   return;
 }
