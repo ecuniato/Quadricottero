@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
 
@@ -20,15 +21,17 @@
 #define PORT 4567
 
 extern int fd, fd_ak, fd_bmp;
+int fd_gps;
 struct PID_parameters roll_angle_pid, pitch_angle_pid, yaw_angle_pid, roll_rate_pid, pitch_rate_pid, yaw_rate_pid;
 int channel = 1;
 int imuReady=0, motoReady=0;
 FILE* file;
 extern float dest1[3], dest2[3];
-float stepTime, stepTime1;
+float stepTime, stepTime1, stepTime2;
 ekf_t ekf;
 double height, zacc=0;
 float dist;
+struct GPS_Data dd;
 
 
 struct dataStruct
@@ -118,13 +121,14 @@ PI_THREAD (sensorFusion)
 	  stepTime1 /= 1000000; 
 		
 	//	MadgwickAHRSupdate(data.angolo.gyro_x * PI / 180, -data.angolo.gyro_y * PI / 180, -data.angolo.gyro_z * PI / 180, -data.angolo.acc_x, data.angolo.acc_y, data.angolo.acc_z, data.angolo.mag_y, -data.angolo.mag_x, data.angolo.mag_z, 1/stepTime1);
-		MadgwickAHRSupdate(data.angolo.gyro_x * PI / 180, data.angolo.gyro_y * PI / 180, data.angolo.gyro_z * PI / 180, data.angolo.acc_x, data.angolo.acc_y, data.angolo.acc_z, data.angolo.mag_y, data.angolo.mag_x, data.angolo.mag_z, 1/stepTime1);
+		MadgwickAHRSupdate(data.angolo.gyro_x * PI / 180, data.angolo.gyro_y * PI / 180, data.angolo.gyro_z * PI / 180, data.angolo.acc_x, data.angolo.acc_y, data.angolo.acc_z, data.angolo.mag_y, data.angolo.mag_x, -data.angolo.mag_z, 1/stepTime1);
 	// 	MadgwickAHRSupdateIMU(data.angolo.gyro_x * PI / 180, -data.angolo.gyro_y * PI / 180, -data.angolo.gyro_z * PI / 180, -data.angolo.acc_x, data.angolo.acc_y, data.angolo.acc_z, 1/stepTime1);
 		data.angolo.z=atan2(2*q1*q2-2*q0*q3,2*q0*q0+2*q1*q1-1)*180/PI;
 	  data.angolo.x=asin(2*q1*q3+2*q0*q2)*180/PI;
 	  data.angolo.y=atan2(2*q2*q3-2*q0*q1,2*q0*q0+2*q3*q3-1)*180/PI;
 	  zacc=data.angolo.acc_z - (q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3);
-	  
+
+		usleep(90);
 	  //TODO: Controllare convergenza sensor fusion
        
 	}
@@ -154,7 +158,7 @@ PI_THREAD (imuData)
   printf("Imu ready \n");
   
  //  while( !motoReady ) 
-    delay(10000); 
+ //   delay(500); 
   
   init_pid_param (&roll_angle_pid, data.a_kp, data.a_ki, data.a_kd, 0, 600, 0);
   init_pid_param (&pitch_angle_pid, data.a_kp, data.a_ki, data.a_kd, 0, 600, 0);
@@ -169,19 +173,17 @@ PI_THREAD (imuData)
     if (time==0)
     {
       time = micros();
-      delay(5);
+      delay(1);
     }
     else
     {
     	time1 = micros();
       stepTime = time1 - time;
       time = time1;
-     // if(stepTime<5000)
-      //	delayMicroseconds(5000-stepTime);
       stepTime /= 1000000;      
       
       get_angle(&(data.angolo));
-      dist = distanza_sensore(ECHO, TRIG) / 100;
+
 			model(&ekf, -zacc*9.81); //Check acc sign
 			height=44330.0*(1-pow((data.angolo.press/101325),(1/5.255)));
 			double meas[]={height,dist};
@@ -248,6 +250,48 @@ PI_THREAD (imuData)
   return;  
 }
 
+PI_THREAD (HC_Gps) {
+	unsigned int time=0, time1;
+	int n=0, i=0;
+	char dati[500];
+	
+	while(!imuReady) delay(500);
+	
+	while (1) {
+		time1 = micros();
+	  stepTime2 = time1 - time;
+		time = time1;
+	  stepTime2 /= 1000000; 
+	  
+	  dist = distanza_sensore(ECHO, TRIG) / 100;
+	  
+		serialPuts(fd_gps, "$PUBX,00*33\r\n");  
+	  fflush(NULL);
+	  n = serialDataAvail(fd_gps);
+	   
+	  while(n >= 1)
+	  {  
+		 if ( (serialGetchar(fd_gps)=='$') && (serialGetchar(fd_gps)=='P') )
+		 {
+		  for( i = 0 ;; i++)
+		  {
+			  dati[i] = serialGetchar(fd_gps);
+			  if( dati[i] == '\n' )
+			  {
+				  dati[i+1] = '\0';
+					scompatta(dati,&dd);
+				  break;
+			  }
+		  };
+		  break;
+		  } 
+		};
+	 
+		usleep(10000);
+		
+	}
+}
+
 
 PI_THREAD (debug)
 {
@@ -256,9 +300,11 @@ PI_THREAD (debug)
   while (1)
   {
    //printf("StepSensors: %f - StepFusion: %f\n", stepTime, stepTime1);   
-   printf("X0: %f - X1: %f - X2: %f - H: %f\n", ekf.x[0], ekf.x[1], ekf.x[2], dist);   
-    fflush(NULL);
-    delay(100);
+   printf("X0: %f - X1: %f - X2: %f - HF: %f - HS: %f - HC: %f - dis: %f\n", ekf.x[0], ekf.x[1], ekf.x[2], stepTime1, stepTime, stepTime2, dist);   
+   gpsPrint(&dd);
+	 // printf("\n%f ",dist);
+		fflush(NULL);
+    delay(1000);
   }
   return;
 }
@@ -318,26 +364,37 @@ int main()
   pinMode(ECHO, INPUT);
 
 	// Apre l'interfaccia I2C
-   fd = wiringPiI2CSetup(MPU_ADDRESS);
-   if( fd == -1 )
-   {
-      printf("Inizializzazione I2C MPU fallita!");
-      return 0;
-   }
-
+  fd = wiringPiI2CSetup(MPU_ADDRESS);
+  if( fd == -1 )
+  {
+     printf("Inizializzazione I2C MPU fallita!");
+     return 0;
+  }
+	
 	fd_ak = wiringPiI2CSetup(AK8963_ADDRESS);
-   if( fd_ak == -1 )
-   {
-      printf("Inizializzazione I2C HMC fallita!");
-      return 0;
-   }
-   
-   fd_bmp = wiringPiI2CSetup(BMP280_ADDRESS);
-   if( fd_bmp == -1 )
-   {
-      printf("Inizializzazione I2C BMP fallita!");
-      return 0;
-   }
+  if( fd_ak == -1 )
+  {
+     printf("Inizializzazione I2C HMC fallita!");
+     return 0;
+  }
+  
+  fd_bmp = wiringPiI2CSetup(BMP280_ADDRESS);
+  if( fd_bmp == -1 )
+  {
+     printf("Inizializzazione I2C BMP fallita!");
+     return 0;
+  }
+  
+  //Apre l'interfaccia seriale
+  fd_gps = serialOpen("/dev/ttyAMA0", 9600);
+  if( fd == -1 )
+  {
+     printf("Inizializzazione porta seriale fallita!");
+     return 0;
+  }
+  
+  //Configura il gps
+  gpsConfig(fd_gps);
 
 	
 	// Avvia il thread
@@ -350,6 +407,9 @@ int main()
 	e=piThreadCreate (sensorFusion);
 	if (e!=0)
 	  printf("Thread non partito"); 
+	e=piThreadCreate (HC_Gps);
+	if (e!=0)
+	  printf("Thread non partito"); 	  
 	  
 	setup(PULSE_WIDTH_INCREMENT_GRANULARITY_US_DEFAULT, DELAY_VIA_PWM);
 	
